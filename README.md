@@ -1,5 +1,6 @@
 # HakimLamb
 Copyright 2025 The HakimLamb Team
+
 Published under MIT License
 
 An interactive map and search engine that filters publications by origin institution and by represented regions.
