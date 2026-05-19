@@ -1,5 +1,6 @@
 # HakimLamb
-Copyright (C) 2025 Dennis Lima
+Copyright 2025 The HakimLamb Team
+Published under MIT License
 
 An interactive map and search engine that filters publications by origin institution and by represented regions.
 
@@ -8,5 +9,3 @@ HakimLamb enables:
 - Ethical research made easier with ethical tags (e.g. biodegradable, natural, synthetic, ecological cruelty-free, vegan, vegetarian).
 - Sustainable development made easier with SDG tags.
 - Frontiers of sustainable development made accessible with specialized tags.
-
-Deadline for prototype: 30 May 2026
