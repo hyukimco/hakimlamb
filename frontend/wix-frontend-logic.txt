@@ -1,0 +1,694 @@
+import wixData from 'wix-data';
+import wixWindow from 'wix-window-frontend';
+import {
+    hakimPros,
+    hakimConfluence,
+    hakimBreakthrough,
+    hakimEnvironmentalGuideline,
+    hakimHealthGuideline
+} from 'backend/aiFunctions.web';
+ 
+let allArticles        = [];
+let mapInitialized     = false;
+let currentMediaType   = null;
+let currentlyExpandedPost = null;
+let showRepresents     = false;
+let countryCoords      = {};
+let selectedMotivation = null;
+let selectedVeganity   = null;
+let selectedScienceField = null;
+let selectedScienceArea  = null;
+let selectedScienceFields = {};
+let selectedFromYear   = null;
+let selectedToYear     = null;
+ 
+const targetButtonImageInactive = "https://static.wixstatic.com/media/f13a34_2bbc651c7cf54022a3b6355ea5319917~mv2.png";
+const targetButtonImageActive   = "https://static.wixstatic.com/media/f13a34_4c50b5dedf174f028cbec6145ce01752~mv2.png";
+ 
+// ─────────────────────────────────────────────────────────────
+// ON READY
+// ─────────────────────────────────────────────────────────────
+$w.onReady(async function () {
+    const iframe = $w("#mapContainer");
+ 
+    $w("#sidebar").collapse();
+    hideExpandedPost();
+    hideExpandedFilter();
+    populateYearDropdowns();
+    $w("#expandFiltersButton").expand();
+ 
+    // Load articles
+    const results = await wixData.query("database").limit(1000).find();
+    allArticles = results.items;
+    updateRepeater(allArticles);
+ 
+    // Load country coordinates
+    const countryData = await wixData.query("Country").limit(1000).find();
+    countryCoords = {};
+    countryData.items.forEach(item => {
+        if (item.name && item.latitude && item.longitude) {
+            countryCoords[item.name.trim().toLowerCase()] = {
+                lat: Number(item.latitude),
+                lng: Number(item.longitude)
+            };
+        }
+    });
+ 
+    // Send articles to map on iframe ready
+    iframe.onMessage((event) => {
+        const data = event.data;
+ 
+        if (!mapInitialized && Array.isArray(data)) {
+            sendArticlesToMap(allArticles);
+            mapInitialized = true;
+        }
+ 
+        if ((data.articleId && data.action === 'hover') || (data.articleId && data.action === 'click')) {
+            hideExpandedFilter();
+            showSidebarIfHidden();
+        }
+ 
+        if (data.articleId && data.action === 'hover') {
+            highlightArticleInSidebar(data.articleId);
+        }
+ 
+        if (data.articleId && data.action === 'click') {
+            showExpandedPost(data.articleId);
+            const article = allArticles.find(a => a._id === data.articleId);
+            if (article) {
+                let lat = article.latitude ? Number(article.latitude) : null;
+                let lng = article.longitude ? Number(article.longitude) : null;
+                if ((!lat || !lng) && showRepresents && article.represents) {
+                    const firstCountry = article.represents.split(',')[0].trim().toLowerCase();
+                    if (countryCoords[firstCountry]) {
+                        lat = countryCoords[firstCountry].lat;
+                        lng = countryCoords[firstCountry].lng;
+                    }
+                }
+                if (lat && lng) {
+                    $w("#mapContainer").postMessage({
+                        action: 'centerMarker',
+                        latitude: lat,
+                        longitude: lng
+                    });
+                }
+            }
+        }
+    });
+ 
+    setTimeout(() => {
+        if (!mapInitialized) {
+            sendArticlesToMap(allArticles);
+            mapInitialized = true;
+        }
+    }, 1500);
+ 
+    // ── Search & clear ───────────────────────────────────────
+    $w("#searchButton").onClick(() => { applyFilters(); });
+    $w("#searchInput").onKeyPress((event) => {
+        if (event.key === "Enter") { applyFilters(); }
+    });
+    $w("#clearButton").onClick(() => {
+        $w("#searchInput").value = "";
+        currentMediaType = null;
+        applyFilters();
+    });
+ 
+    // ── Reset all filters ────────────────────────────────────
+    $w("#resetButton").onClick(() => {
+        $w("#searchInput").value = "";
+        currentMediaType      = null;
+        selectedMotivation    = null;
+        selectedVeganity      = null;
+        selectedScienceField  = null;
+        selectedScienceArea   = null;
+        selectedScienceFields = {};
+        selectedFromYear      = null;
+        selectedToYear        = null;
+        showRepresents        = false;
+ 
+        $w("#motivationTags").value = [];
+        $w("#veganityTags").value   = [];
+        $w("#fromYear").value       = "";
+        $w("#toYear").value         = "";
+        $w("#targetImage").src      = targetButtonImageInactive;
+ 
+        $w("#areaRepeater").forEachItem(($item) => {
+            $item("#fieldTags").value = [];
+        });
+ 
+        highlightActiveButton();
+        updateRepeater(allArticles);
+        sendArticlesToMap(allArticles);
+        if (currentlyExpandedPost) { hideExpandedPost(); }
+    });
+ 
+    // ── Media type buttons ───────────────────────────────────
+    $w("#btnArticles").onClick(() => {
+        currentMediaType = "articles";
+        applyFilters();
+        highlightActiveButton();
+        if (currentlyExpandedPost) { hideExpandedPost(); }
+    });
+    $w("#btnDocumentaries").onClick(() => {
+        currentMediaType = "documentaries";
+        applyFilters();
+        highlightActiveButton();
+        if (currentlyExpandedPost) { hideExpandedPost(); }
+    });
+    $w("#btnChapters").onClick(() => {
+        currentMediaType = "chapters";
+        applyFilters();
+        highlightActiveButton();
+        if (currentlyExpandedPost) { hideExpandedPost(); }
+    });
+    $w("#btnMovies").onClick(() => {
+        currentMediaType = "movies";
+        applyFilters();
+        highlightActiveButton();
+        if (currentlyExpandedPost) { hideExpandedPost(); }
+    });
+ 
+    // ── Motivation tags ──────────────────────────────────────
+    wixData.query("database").limit(1000).find().then((results) => {
+        const allMotivations = results.items
+            .map(item => item.motivation)
+            .filter(Boolean)
+            .flatMap(m => m.split(',').map(part => part.trim()))
+            .filter(m => m);
+        const uniqueMotivations = [...new Set(allMotivations)].sort((a, b) => a.localeCompare(b));
+        $w("#motivationTags").options = uniqueMotivations.map(m => ({ label: m, value: m }));
+ 
+        const allVeganities = results.items
+            .map(item => item.veganity)
+            .filter(Boolean)
+            .map(v => v.trim().toLowerCase());
+        const uniqueVeganities = [...new Set(allVeganities)].sort();
+        $w("#veganityTags").options = uniqueVeganities.map(v => ({ label: v, value: v }));
+    });
+ 
+    $w("#motivationTags").onChange(() => {
+        const values  = $w("#motivationTags").value;
+        const clicked = values.length > 0 ? values[values.length - 1] : null;
+        if (clicked === selectedMotivation) {
+            selectedMotivation = null;
+            $w("#motivationTags").value = [];
+        } else {
+            selectedMotivation = clicked;
+            $w("#motivationTags").value = [clicked];
+        }
+        applyFilters();
+    });
+ 
+    $w("#veganityTags").onChange(() => {
+        const values  = $w("#veganityTags").value;
+        const clicked = values.length > 0 ? values[values.length - 1] : null;
+        if (clicked === selectedVeganity) {
+            selectedVeganity = null;
+            $w("#veganityTags").value = [];
+        } else {
+            selectedVeganity = clicked;
+            $w("#veganityTags").value = [clicked];
+        }
+        applyFilters();
+    });
+ 
+    // ── Science fields repeater ──────────────────────────────
+    wixData.query("ScienceFields").ascending("title_fld", "field").find().then(results => {
+        const grouped = results.items.reduce((acc, item) => {
+            const area  = item.title_fld?.trim() || "Other";
+            const field = item.field?.trim();
+            if (!field) return acc;
+            if (!acc[area]) acc[area] = [];
+            acc[area].push(field);
+            return acc;
+        }, {});
+ 
+        const repeaterData = Object.entries(grouped).map(([area, fields], idx) => ({
+            _id: String(idx),
+            area,
+            fields: [...new Set(fields)]
+        }));
+ 
+        $w("#areaRepeater").data = repeaterData;
+    });
+ 
+    $w("#areaRepeater").onItemReady(($item, itemData) => {
+        $item("#areaText").text = itemData.area;
+        $item("#fieldTags").options = itemData.fields.map(f => ({ label: f, value: f }));
+        $item("#fieldTags").value   = [];
+ 
+        $item("#fieldTags").onChange(() => {
+            const values  = $item("#fieldTags").value;
+            const clicked = values.length > 0 ? values[values.length - 1] : null;
+            const area    = itemData.area;
+ 
+            if (!clicked) {
+                delete selectedScienceFields[area];
+                $item("#fieldTags").value = [];
+            } else if (
+                selectedScienceFields[area] &&
+                selectedScienceFields[area].toLowerCase() === clicked.toLowerCase()
+            ) {
+                delete selectedScienceFields[area];
+                $item("#fieldTags").value = [];
+            } else {
+                selectedScienceFields[area] = clicked;
+                $item("#fieldTags").value   = [clicked];
+            }
+            applyFilters();
+        });
+    });
+ 
+    // ── Filter panel expand/retract ──────────────────────────
+    $w("#expandFiltersButton").onClick(() => {
+        $w("#box76").style.borderRadius = "0px";
+        $w("#extraFiltersBox").expand();
+        $w("#expandFiltersButton").collapse();
+        hideSidebar();
+    });
+    $w("#retractFiltersButton").onClick(() => {
+        $w("#extraFiltersBox").collapse();
+        $w("#expandFiltersButton").expand();
+        hideSidebar();
+    });
+ 
+    // ── Year dropdowns ───────────────────────────────────────
+    $w("#fromYear").onChange(() => {
+        selectedFromYear = $w("#fromYear").value ? Number($w("#fromYear").value) : null;
+    });
+    $w("#toYear").onChange(() => {
+        selectedToYear = $w("#toYear").value ? Number($w("#toYear").value) : null;
+    });
+    $w("#filterButton").onClick(() => { applyFilters(); });
+ 
+    // ── Represents toggle ────────────────────────────────────
+    $w("#targetImage").onClick(() => {
+        showRepresents = !showRepresents;
+        $w("#targetImage").src = showRepresents ? targetButtonImageActive : targetButtonImageInactive;
+        applyFilters();
+    });
+ 
+    // ── Sidebar toggle ───────────────────────────────────────
+    $w("#backButton").onClick(() => { hideExpandedPost(); });
+    $w("#toggleSidebarBtn").onClick(() => {
+        if ($w("#sidebar").collapsed) { showSidebar(); } else { hideSidebar(); }
+    });
+ 
+    // ── AI modal close ───────────────────────────────────────
+    $w("#aiModalCloseBtn").onClick(() => { hideAIModal(); });
+    $w("#aiModalOverlay").onClick(() => { hideAIModal(); });
+ 
+    // ── AI buttons ───────────────────────────────────────────
+ 
+    // 👍 Pros & Cons — requires a single article to be expanded
+    $w("#btnPros").onClick(async () => {
+        if (!currentlyExpandedPost) {
+            showAIModal("👍 Pros & Cons", "Please click on a marker or article first to select a single article.");
+            return;
+        }
+        const article = allArticles.find(a => a._id === currentlyExpandedPost);
+        if (!article || !article.idea) {
+            showAIModal("👍 Pros & Cons", "No text available for this article.");
+            return;
+        }
+        showAILoading("👍 Pros & Cons");
+        try {
+            const result = await hakimPros(article.idea);
+            showAIModal("👍 Pros & Cons", result);
+        } catch (e) {
+            showAIModal("👍 Pros & Cons", "Error: " + e.message);
+        }
+    });
+ 
+    // 🟰 Confluence
+    $w("#btnConfluence").onClick(async () => {
+        const ideas = getCurrentFilteredIdeas();
+        if (ideas.length === 0) {
+            showAIModal("🟰 Confluence", "No articles currently visible to analyse.");
+            return;
+        }
+        showAILoading("🟰 Confluence");
+        try {
+            const result = await hakimConfluence(ideas);
+            showAIModal("🟰 Confluence", result);
+        } catch (e) {
+            showAIModal("🟰 Confluence", "Error: " + e.message);
+        }
+    });
+ 
+    // 🌟 Breakthrough
+    $w("#btnBreakthrough").onClick(async () => {
+        const ideas = getCurrentFilteredIdeas();
+        if (ideas.length === 0) {
+            showAIModal("🌟 Breakthrough", "No articles currently visible to analyse.");
+            return;
+        }
+        showAILoading("🌟 Breakthrough");
+        try {
+            const result = await hakimBreakthrough(ideas);
+            showAIModal("🌟 Breakthrough", result);
+        } catch (e) {
+            showAIModal("🌟 Breakthrough", "Error: " + e.message);
+        }
+    });
+ 
+    // 🌳 Environmental Guidelines
+    $w("#btnEnvironmental").onClick(async () => {
+        const ideas = getCurrentFilteredIdeas();
+        if (ideas.length === 0) {
+            showAIModal("🌳 Environmental Guidelines", "No articles currently visible to analyse.");
+            return;
+        }
+        showAILoading("🌳 Environmental Guidelines");
+        try {
+            const result = await hakimEnvironmentalGuideline(ideas);
+            showAIModal("🌳 Environmental Guidelines", result);
+        } catch (e) {
+            showAIModal("🌳 Environmental Guidelines", "Error: " + e.message);
+        }
+    });
+ 
+    // ❤️‍🩹 Health Guidelines
+    $w("#btnHealth").onClick(async () => {
+        const ideas = getCurrentFilteredIdeas();
+        if (ideas.length === 0) {
+            showAIModal("❤️‍🩹 Health Guidelines", "No articles currently visible to analyse.");
+            return;
+        }
+        showAILoading("❤️‍🩹 Health Guidelines");
+        try {
+            const result = await hakimHealthGuideline(ideas);
+            showAIModal("❤️‍🩹 Health Guidelines", result);
+        } catch (e) {
+            showAIModal("❤️‍🩹 Health Guidelines", "Error: " + e.message);
+        }
+    });
+});
+ 
+// ─────────────────────────────────────────────────────────────
+// YEAR DROPDOWNS
+// ─────────────────────────────────────────────────────────────
+function populateYearDropdowns() {
+    wixData.query("database").ascending("year").limit(1000).find()
+        .then((results) => {
+            if (results.items.length === 0) return;
+ 
+            const validYears = results.items
+                .map(item => item.year)
+                .filter(y => y !== undefined && y !== null && y !== "" && !isNaN(y))
+                .map(y => Number(y));
+ 
+            if (validYears.length === 0) return;
+ 
+            const minYear = Math.min(...validYears);
+            const maxYear = Math.max(...validYears);
+            const years   = [];
+            for (let y = minYear; y <= maxYear; y++) { years.push(y.toString()); }
+ 
+            const fromOptions = [{ label: "From", value: "" }, ...years.map(y => ({ label: y, value: y }))];
+            const toOptions   = [{ label: "To",   value: "" }, ...years.map(y => ({ label: y, value: y }))];
+ 
+            $w("#fromYear").options = fromOptions;
+            $w("#toYear").options   = toOptions;
+        })
+        .catch(err => console.error("Error loading years:", err));
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// SIDEBAR SHOW / HIDE
+// ─────────────────────────────────────────────────────────────
+function showSidebar() {
+    if ($w("#sidebar").collapsed) { $w("#sidebar").expand(); }
+    if (!$w("#extraFiltersBox").collapsed) {
+        $w("#extraFiltersBox").collapse();
+        $w("#expandFiltersButton").expand();
+    }
+}
+ 
+function hideSidebar() {
+    if (!$w("#sidebar").collapsed) { $w("#sidebar").collapse(); }
+}
+ 
+function showSidebarIfHidden() {
+    if ($w("#sidebar").collapsed) { $w("#sidebar").expand(); }
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// MAP
+// ─────────────────────────────────────────────────────────────
+function sendArticlesToMap(articles) {
+    const iframe     = $w("#mapContainer");
+    const simplified = [];
+ 
+    articles.forEach(item => {
+        const mediaType = item.mediaType?.toLowerCase() || 'articles';
+        const base = {
+            id:           item._id,
+            title:        item.title,
+            idea:         item.idea,
+            field:        item.field,
+            motivation:   item.motivation,
+            link:         item.link,
+            category:     item.veganity?.toLowerCase(),
+            mediaType,
+            qualityIndex: Math.min(Number(item.quality || 0) / 500, 1),
+            accessType:   item.openness
+        };
+ 
+        if (showRepresents && item.represents) {
+            const countries = item.represents.split(',').map(c => c.trim().toLowerCase());
+            countries.forEach(country => {
+                if (countryCoords[country]) {
+                    simplified.push({ ...base, latitude: countryCoords[country].lat, longitude: countryCoords[country].lng });
+                }
+            });
+        } else if (item.latitude && item.longitude) {
+            simplified.push({ ...base, latitude: Number(item.latitude), longitude: Number(item.longitude) });
+        }
+    });
+ 
+    iframe.postMessage(simplified);
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// SIDEBAR REPEATER
+// ─────────────────────────────────────────────────────────────
+function updateRepeater(articles) {
+    $w("#resultsRepeater").data = articles;
+ 
+    $w("#resultsRepeater").onItemReady(($item, itemData) => {
+        $item("#ideaText").text = trimText(itemData.idea || "", 86);
+ 
+        const tags = [itemData.area, itemData.field, itemData.motivation, itemData.veganity]
+            .filter(Boolean).join(", ");
+        $item("#tagText").text       = trimText(tags || "Not specified", 70);
+        $item("#representsText").text = trimText(itemData.represents || "", 80);
+ 
+        $item("#moreButton").onClick(() => {
+            showExpandedPost(itemData._id);
+            setTimeout(() => {
+                $w("#sidebar").scrollTo().catch(err => console.log("Scroll failed:", err));
+            }, 200);
+        });
+        $item("#itemContainer").onClick(() => { showExpandedPost(itemData._id); });
+    });
+}
+ 
+function highlightArticleInSidebar(articleId) {
+    setTimeout(() => {
+        $w("#resultsRepeater").forEachItem(($item, itemData) => {
+            const box = $item("#box7");
+            if (!box) return;
+ 
+            if (itemData._id === articleId) {
+                $w("#resultsRepeater").scrollTo();
+                box.style.backgroundColor = "#FFDFCD";
+                const targetElementId = $item("#box6").id;
+                wixWindow.scrollTo(0, $w("#" + targetElementId).y);
+                setTimeout(() => { box.style.backgroundColor = "rgba(0,0,0,0)"; }, 2000);
+            } else {
+                box.style.backgroundColor = "rgba(0,0,0,0)";
+            }
+        });
+    }, 100);
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// EXPANDED POST VIEW
+// ─────────────────────────────────────────────────────────────
+function showExpandedPost(articleId) {
+    const article = allArticles.find(item => item._id === articleId);
+    if (!article) return;
+ 
+    currentlyExpandedPost = articleId;
+    $w("#resultsRepeater").collapse();
+    $w("#expandedView").expand();
+    updateExpandedView(article);
+}
+ 
+function hideExpandedPost() {
+    currentlyExpandedPost = null;
+    $w("#expandedView").collapse();
+    $w("#resultsRepeater").expand();
+}
+ 
+function hideExpandedFilter() {
+    $w("#expandFiltersButton").expand();
+    $w("#extraFiltersBox").collapse();
+}
+ 
+function updateExpandedView(article) {
+    const accessIcon = $w("#accessIcon");
+    accessIcon.src = article.openness === "restricted"
+        ? "https://static.wixstatic.com/shapes/f13a34_fdef2c45bc2f47ab8649a64fbb10d109.svg"
+        : "https://static.wixstatic.com/shapes/f13a34_6a97ddcf18604429b6379f1248ea8b9f.svg";
+ 
+    $w("#expandedTitle").html =
+        `<a href="${article.link || '#'}" target="_blank" style="text-decoration:underline;color:#0077cc;">${article.title}</a>`;
+ 
+    const tags = [article.area, article.field, article.motivation, article.veganity]
+        .filter(Boolean).join(", ");
+    $w("#tags").text = tags || "Not specified";
+ 
+    $w("#ideaExpandedText").text      = article.idea         || "";
+    $w("#originInstitution").text     = article.origin        || "";
+    $w("#representsExpandedText").text = article.represents   || "Not specified";
+    $w("#qualityIndexText").text      = `Quality Index: ${article.quality || "Not rated"}`;
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// FILTERS
+// ─────────────────────────────────────────────────────────────
+function applyFilters() {
+    const filtered = currentFilteredArticles();
+    const finalArticles = (filtered.length === 0 && areAllFiltersEmpty())
+        ? allArticles
+        : filtered;
+ 
+    updateRepeater(finalArticles);
+    sendArticlesToMap(finalArticles);
+    if (currentlyExpandedPost) { hideExpandedPost(); }
+}
+ 
+function areAllFiltersEmpty() {
+    const query = $w("#searchInput").value.trim();
+    return !query &&
+        !currentMediaType &&
+        !selectedMotivation &&
+        !selectedVeganity &&
+        Object.keys(selectedScienceFields).length === 0 &&
+        !selectedFromYear &&
+        !selectedToYear &&
+        !showRepresents;
+}
+ 
+function currentFilteredArticles() {
+    const query = $w("#searchInput").value.trim().toLowerCase();
+ 
+    return allArticles.filter(article => {
+        const matchesSearch = !query ||
+            article.title?.toLowerCase().includes(query) ||
+            article.idea?.toLowerCase().includes(query)  ||
+            article.represents?.toLowerCase().includes(query) ||
+            article.origin?.toLowerCase().includes(query) ||
+            article.tags?.toLowerCase().includes(query);
+ 
+        const matchesType = !currentMediaType ||
+            article.mediaType?.toLowerCase() === currentMediaType;
+ 
+        const matchesMotivation = !selectedMotivation ||
+            (article.motivation &&
+             article.motivation.split(',')
+                .map(m => m.trim().toLowerCase())
+                .includes(selectedMotivation.toLowerCase()));
+ 
+        const matchesVeganity = !selectedVeganity ||
+            (article.veganity &&
+             article.veganity.toLowerCase() === selectedVeganity.toLowerCase());
+ 
+        const matchesScienceField =
+            Object.keys(selectedScienceFields).length === 0 ||
+            Object.entries(selectedScienceFields).every(([, field]) => {
+                if (!article.field) return false;
+                return article.field.toString().split(',')
+                    .map(f => f.trim().toLowerCase())
+                    .includes(field.toLowerCase());
+            });
+ 
+        const year = article.year ? Number(article.year) : null;
+        let matchesYear = true;
+        if (selectedFromYear || selectedToYear) {
+            if (!year) {
+                matchesYear = false;
+            } else if (selectedFromYear && selectedToYear) {
+                matchesYear = year >= selectedFromYear && year <= selectedToYear;
+            } else if (selectedFromYear) {
+                matchesYear = year >= selectedFromYear;
+            } else {
+                matchesYear = year <= selectedToYear;
+            }
+        }
+ 
+        const hasValidRepresents = showRepresents && article.represents &&
+            article.represents.split(',').some(c => countryCoords[c.trim().toLowerCase()]);
+        const hasLatLng = article.latitude && article.longitude;
+ 
+        return matchesSearch &&
+               matchesType &&
+               matchesMotivation &&
+               matchesScienceField &&
+               matchesVeganity &&
+               matchesYear &&
+               (showRepresents ? hasValidRepresents : hasLatLng);
+    });
+}
+ 
+function highlightActiveButton() {
+    ["#btnArticles", "#btnDocumentaries", "#btnChapters", "#btnMovies"].forEach(id => {
+        const isActive = currentMediaType && id.toLowerCase().includes(currentMediaType);
+        $w(id).style.backgroundColor = isActive ? "#f85300" : "#ffffff";
+    });
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// AI MODAL
+// ─────────────────────────────────────────────────────────────
+function getCurrentFilteredIdeas() {
+    return currentFilteredArticles().map(a => a.idea).filter(Boolean);
+}
+ 
+function showAIModal(title, content) {
+    $w("#aiModalTitle").text   = title;
+    //$w("#aiModalContent").text = content;
+    const formattedContent = `
+<div style="font-size:16px !important;">
+${content
+    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+    .replace(/\n/g, "<br>")}
+</div>`;
+
+    $w("#aiModalContent").html = formattedContent;
+    $w("#aiModalOverlay").expand();
+    $w("#aiModalBox").expand();
+}
+ 
+function showAILoading(title) {
+    $w("#aiModalTitle").text   = title;
+    $w("#aiModalContent").text = "⏳ Thinking... this may take up to 30 seconds.";
+    $w("#aiModalOverlay").expand();
+    $w("#aiModalBox").expand();
+}
+ 
+function hideAIModal() {
+    $w("#aiModalOverlay").collapse();
+    $w("#aiModalBox").collapse();
+}
+ 
+// ─────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────
+function trimText(text, maxLength) {
+    if (!text) return "";
+    return text.length <= maxLength ? text : text.slice(0, maxLength) + "...";
+}

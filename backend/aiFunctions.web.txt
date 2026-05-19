@@ -1,0 +1,180 @@
+import { Permissions, webMethod } from "wix-web-module";
+import { getSecret } from 'wix-secrets-backend';
+
+const MODEL    = "openai/gpt-4o-mini";
+const BASE_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+// ─────────────────────────────────────────────────────────────
+// Core API caller
+// ─────────────────────────────────────────────────────────────
+async function callOpenRouter(messages, max_tokens = 800) {
+    const apiKey = await getSecret("openrouter_api_key");
+
+    if (!apiKey) {
+        throw new Error("Secret 'openrouter_api_key' is empty. Check Wix Secrets Manager.");
+    }
+
+    const response = await fetch(BASE_URL, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ model: MODEL, messages, max_tokens })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        const msg = data?.error?.message || JSON.stringify(data);
+        throw new Error(`OpenRouter error (HTTP ${response.status}): ${msg}`);
+    }
+
+    if (!data.choices || !data.choices[0]) {
+        throw new Error("No response from AI model: " + JSON.stringify(data).slice(0, 200));
+    }
+
+    return data.choices[0].message.content;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test — remove from production once confirmed working
+// ─────────────────────────────────────────────────────────────
+export const testConnection = webMethod(Permissions.Anyone, async () => {
+    return callOpenRouter([{ role: "user", content: "Reply with exactly: API OK" }], 10);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 👍 Pros & Cons — single article
+// ─────────────────────────────────────────────────────────────
+export const hakimPros = webMethod(Permissions.Anyone, async (text) => {
+    const messages = [
+        {
+            role: "system",
+            content: "You are a helpful vegan professor that summarizes journal abstracts concisely in under 500 words."
+        },
+        {
+            role: "user",
+            content:
+                `Summarize the following text in a line naming the main subject and fields of science of the study, ` +
+                `followed by bullet points, showing one to three **Pros** of the main subject, ` +
+                `and one to three **Cons and remediations** as a list of cons and their possible remediations in a vegan way. ` +
+                `Use 'Pros', 'Cons and remediations' as titles for the two lists. ` +
+                `Do not use 'vegan remediation', 'vegan solution', '(vegan)' or similar in subtitles:\n\n${text}`
+        }
+    ];
+    return callOpenRouter(messages, 400);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 🟰 Confluence — common affirmations across visible articles
+// Capped at 30 articles, 600 chars each to stay within token limits
+// ─────────────────────────────────────────────────────────────
+export const hakimConfluence = webMethod(Permissions.Anyone, async (abstracts) => {
+    const capped = abstracts.slice(0, 30);
+    const texts  = capped.map(a => a.slice(0, 600)).join("\n##\n");
+
+    const messages = [
+        {
+            role: "system",
+            content: "You are a helpful vegan professor that lists the common affirmations of different texts in under 500 words."
+        },
+        {
+            role: "user",
+            content:
+                `The following abstracts are separated by a ## symbol. ` +
+                `List up to 10 affirmations with which more than 80% of them agree:\n\n${texts}`
+        }
+    ];
+    return callOpenRouter(messages, 800);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 🌟 Breakthrough — single call instead of one-per-abstract loop
+// FIX: the original loop made N+1 sequential API calls which always
+// exceeded Wix's ~14 second backend timeout. One call does the same job.
+// Capped at 25 articles, 500 chars each.
+// ─────────────────────────────────────────────────────────────
+export const hakimBreakthrough = webMethod(Permissions.Anyone, async (abstracts) => {
+    const capped   = abstracts.slice(0, 25);
+    const numbered = capped
+        .map((a, i) => `[${i + 1}] ${a.slice(0, 500)}`)
+        .join("\n\n");
+
+    const messages = [
+        {
+            role: "system",
+            content:
+                "You are a helpful vegan professor who identifies and ranks scientific " +
+                "breakthroughs and discoveries that support vegan practices. " +
+                "Be concise and direct. Use bullet points."
+        },
+        {
+            role: "user",
+            content:
+                `The following numbered abstracts each come from a different study. ` +
+                `Read all of them, then produce a single ranked list of the top 10 most ` +
+                `significant discoveries or breakthroughs that are either vegan or promote vegan practices. ` +
+                `If there are fewer than 10, rank all of them. ` +
+                `For each item write one sentence describing the breakthrough and note ` +
+                `which abstract number(s) it comes from. ` +
+                `Do not add section titles, preamble or closing remarks — just the ranked list.\n\n` +
+                `${numbered}`
+        }
+    ];
+    return callOpenRouter(messages, 1000);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 🌳 Environmental Guidelines
+// Capped at 30 articles, 600 chars each
+// ─────────────────────────────────────────────────────────────
+export const hakimEnvironmentalGuideline = webMethod(Permissions.Anyone, async (abstracts) => {
+    const capped = abstracts.slice(0, 30);
+    const texts  = capped.map(a => a.slice(0, 600)).join("\n##\n");
+
+    const messages = [
+        {
+            role: "system",
+            content:
+                "You are a helpful climate policy professor that writes climate and environmental " +
+                "guidelines for ministries to mitigate climate change in under 1000 words."
+        },
+        {
+            role: "user",
+            content:
+                `The following abstracts are separated by a ## symbol. ` +
+                `Write ministerial guidelines, in British standard, to mitigate climate change ` +
+                `and environmental collapse, based on the following abstracts, ` +
+                `but never promoting animal farming, representing the Ministry of Environment of Somecountry:\n\n${texts}`
+        }
+    ];
+    return callOpenRouter(messages, 1000);
+});
+
+// ─────────────────────────────────────────────────────────────
+//❤️‍🩹  Health Guidelines
+// Capped at 30 articles, 600 chars each
+// ─────────────────────────────────────────────────────────────
+export const hakimHealthGuideline = webMethod(Permissions.Anyone, async (abstracts) => {
+    const capped = abstracts.slice(0, 30);
+    const texts  = capped.map(a => a.slice(0, 600)).join("\n##\n");
+
+    const messages = [
+        {
+            role: "system",
+            content:
+                "You are a helpful health policy professor that writes health guidelines for ministries, " +
+                "based on affirmations of abstracts, to mitigate diet-related diseases in under 1000 words."
+        },
+        {
+            role: "user",
+            content:
+                `The following abstracts are separated by a ## symbol. ` +
+                `Write ministerial guidelines, in British standard, to mitigate hypertension, diabetes, ` +
+                `obesity and diet-related diseases, based on the following abstracts, ` +
+                `but never promoting animal-based foods, representing the Ministry of Health of Somecountry:\n\n${texts}`
+        }
+    ];
+    return callOpenRouter(messages, 1000);
+});
