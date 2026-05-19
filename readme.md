@@ -1,10 +1,10 @@
 # The HakimLamb Project
 
-An interactive map to search publications in plant-based technology accross all sciences.
+An interactive map to find local publications in plant-based technology accross all sciences.
 
 The HakimLamb Project is a non-profit project initially designed for the Wix platform using Velo language, JavaScript and Leaflet maps. It lists scientific publications on plant-based technologies and related fields, such as veganism, vegetarianism, cruelty-free, fungi-based, algi-based and bacteria-based technologies, serving as a tool to advance sustainable development.
 
-It includes buttons to generate AI summaries of data, including a comparison of pros and cons, health policies and environmental policies based on filtered publications.
+The Project uses (1) a button to shift between origin of data and target of the study, (2) filters for several sciences and years, (3) buttons to generate AI summaries of data, including a comparison of pros and cons, health policies and environmental policies based on filtered publications.
 
 The tools provided by HakimLamb only provide and process data that is of open access, such as title, abstract, author name, affiliation and supplementary data. The tools provided by HakimLamb do not avail restricted content.
 
