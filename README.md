@@ -10,3 +10,6 @@ HakimLamb enables:
 - Ethical research made easier with ethical tags (e.g. biodegradable, natural, synthetic, ecological cruelty-free, vegan, vegetarian).
 - Sustainable development made easier with SDG tags.
 - Frontiers of sustainable development made accessible with specialized tags.
+
+Demo:
+hakimlamb.wixstudio.com/hakimlamb/v10
